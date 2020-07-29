@@ -15,8 +15,7 @@ from ampligraph.latent_features.loss_functions import LOSS_REGISTRY
 from ampligraph.latent_features.regularizers import REGULARIZER_REGISTRY
 from ampligraph.latent_features.optimizers import OPTIMIZER_REGISTRY, SGDOptimizer
 from ampligraph.latent_features.initializers import INITIALIZER_REGISTRY, DEFAULT_XAVIER_IS_UNIFORM
-from ampligraph.evaluation import generate_corruptions_for_fit, to_idx, generate_corruptions_for_eval, \
-    load_negative_triples, hits_at_n_score, mrr_score
+from ampligraph.evaluation import generate_corruptions_for_fit, to_idx, generate_corruptions_for_eval, hits_at_n_score, mrr_score
 from ampligraph.datasets import AmpligraphDatasetAdapter, NumpyDatasetAdapter
 from functools import partial
 from ampligraph.latent_features import constants as constants
