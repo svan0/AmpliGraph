@@ -175,7 +175,7 @@ class HolE(ComplEx):
         """
         return (2 / self.k) * (super()._fn(e_s, e_p, e_o))
 
-    def fit(self, X, early_stopping=False, early_stopping_params={}):
+    def fit(self, X, early_stopping=False, early_stopping_params={}, X_neg_load=None):
         """Train a HolE model.
 
         The model is trained on a training set X using the training protocol
@@ -235,11 +235,11 @@ class HolE(ComplEx):
                 Example: ``early_stopping_params={x_valid=X['valid'], 'criteria': 'mrr'}``
 
         """
-        super().fit(X, early_stopping, early_stopping_params)
+        super().fit(X, early_stopping, early_stopping_params, X_neg_load=X_neg_load)
 
-    def predict(self, X, from_idx=False):
+    def predict(self, X, from_idx=False, X_neg_load=None):
         __doc__ = super().predict.__doc__  # NOQA
-        return super().predict(X, from_idx=from_idx)
+        return super().predict(X, from_idx=from_idx, X_neg_load=X_neg_load)
 
     def calibrate(self, X_pos, X_neg=None, positive_base_rate=None, batches_count=100, epochs=50):
         __doc__ = super().calibrate.__doc__ # NOQA

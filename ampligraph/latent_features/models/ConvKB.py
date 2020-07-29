@@ -397,7 +397,7 @@ class ConvKB(EmbeddingModel):
 
         return tf.squeeze(self.scores)
 
-    def fit(self, X, early_stopping=False, early_stopping_params={}):
+    def fit(self, X, early_stopping=False, early_stopping_params={}, X_neg_load=None):
         """Train a ConvKB model (with optional early stopping).
 
         The model is trained on a training set X using the training protocol described in :cite:`trouillon2016complex`.
@@ -466,4 +466,4 @@ class ConvKB(EmbeddingModel):
                 Example: ``early_stopping_params={x_valid=X['valid'], 'criteria': 'mrr'}``
 
         """
-        super().fit(X, early_stopping, early_stopping_params)
+        super().fit(X, early_stopping, early_stopping_params, X_neg_load)
