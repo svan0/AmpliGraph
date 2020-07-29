@@ -16,7 +16,7 @@ from ampligraph.latent_features.regularizers import REGULARIZER_REGISTRY
 from ampligraph.latent_features.optimizers import OPTIMIZER_REGISTRY, SGDOptimizer
 from ampligraph.latent_features.initializers import INITIALIZER_REGISTRY, DEFAULT_XAVIER_IS_UNIFORM
 from ampligraph.evaluation import generate_corruptions_for_fit, to_idx, generate_corruptions_for_eval, \
-    hits_at_n_score, mrr_score
+    load_negative_triples, hits_at_n_score, mrr_score
 from ampligraph.datasets import AmpligraphDatasetAdapter, NumpyDatasetAdapter
 from functools import partial
 from ampligraph.latent_features import constants as constants
@@ -507,7 +507,7 @@ class EmbeddingModel(abc.ABC):
             self.rel_emb = tf.get_variable('rel_emb', shape=[len(self.rel_to_idx), self.internal_k],
                                            initializer=self.initializer.get_tf_initializer(), dtype=tf.float32)
 
-    def _get_model_loss(self, dataset_iterator):
+    def _get_model_loss(self, dataset_iterator, X_neg_load=None):
         """Get the current loss including loss due to regularization.
         This function must be overridden if the model uses combination of different losses(eg: VAE).
 
@@ -600,14 +600,20 @@ class EmbeddingModel(abc.ABC):
                                                         corrupt_side=side,
                                                         entities_size=entities_size,
                                                         rnd=self.seed)
-
                 # compute corruption scores
                 e_s_neg, e_p_neg, e_o_neg = self._lookup_embeddings(x_neg_tf)
                 scores_neg = self._fn(e_s_neg, e_p_neg, e_o_neg)
 
                 # Apply the loss function
                 loss += self.loss.apply(scores_pos, scores_neg)
+            
+            if X_neg_load is not None:
+                # compute negatives' scores
+                e_s_neg, e_p_neg, e_o_neg = self._lookup_embeddings(X_neg_load)
+                scores_neg = self._fn(e_s_neg, e_p_neg, e_o_neg)
 
+                # Apply the loss function
+                loss += self.loss.apply(scores_pos, scores_neg)
             if self.regularizer is not None:
                 # Apply the regularizer
                 loss += self.regularizer.apply([self.ent_emb, self.rel_emb])
@@ -827,7 +833,7 @@ class EmbeddingModel(abc.ABC):
 
             yield out, unique_entities, entity_embeddings
 
-    def fit(self, X, early_stopping=False, early_stopping_params={}):
+    def fit(self, X, early_stopping=False, early_stopping_params={}, X_neg_load=None):
         """Train an EmbeddingModel (with optional early stopping).
 
         The model is trained on a training set X using the training protocol
@@ -880,6 +886,10 @@ class EmbeddingModel(abc.ABC):
             self.rel_to_idx, self.ent_to_idx = self.train_dataset_handle.generate_mappings()
             prefetch_batches = 1
 
+            if X_neg_load is not None:
+                X_neg_load = to_idx(X_neg_load, self.ent_to_idx, self.rel_to_idx)
+                X_neg_load = tf.convert_to_tensor(X_neg_load)
+
             if len(self.ent_to_idx) > ENTITY_THRESHOLD:
                 self.dealing_with_large_graphs = True
 
@@ -894,7 +904,7 @@ class EmbeddingModel(abc.ABC):
 
                 if not isinstance(self.optimizer, SGDOptimizer):
                     raise Exception("This mode works well only with SGD optimizer with decay (read docs for details).\
- Kindly change the optimizer and restart the experiment")
+                                    Kindly change the optimizer and restart the experiment")
 
             if self.dealing_with_large_graphs:
                 prefetch_batches = 0
@@ -933,7 +943,7 @@ class EmbeddingModel(abc.ABC):
             if self.loss.get_state('require_same_size_pos_neg'):
                 batch_size = batch_size * self.eta
 
-            loss = self._get_model_loss(dataset_iterator)
+            loss = self._get_model_loss(dataset_iterator, X_neg_load)
 
             train = self.optimizer.minimize(loss)
 
@@ -1099,7 +1109,7 @@ class EmbeddingModel(abc.ABC):
             all_ent = all_ent.reshape(-1, 1)
             yield all_ent, entity_embeddings
 
-    def _initialize_eval_graph(self, mode="test"):
+    def _initialize_eval_graph(self, mode="test", X_neg_load=None):
         """Initialize the evaluation graph.
 
         Parameters
@@ -1255,6 +1265,9 @@ class EmbeddingModel(abc.ABC):
             self.out_corr = generate_corruptions_for_eval(self.X_test_tf,
                                                           self.corruption_entities_tf,
                                                           corrupt_side)
+            
+            if X_neg_load is not None:
+                self.out_corr = tf.concat([self.out_corr, X_neg_load], axis = 0)
 
             # Compute scores for negatives
             e_s, e_p, e_o = self._lookup_embeddings(self.out_corr)
@@ -1350,7 +1363,7 @@ class EmbeddingModel(abc.ABC):
 
         self.eval_config = {}
 
-    def get_ranks(self, dataset_handle):
+    def get_ranks(self, dataset_handle, X_neg_load=None):
         """ Used by evaluate_predictions to get the ranks for evaluation.
 
         Parameters
@@ -1370,6 +1383,10 @@ class EmbeddingModel(abc.ABC):
 
         self.eval_dataset_handle = dataset_handle
 
+        if X_neg_load is not None:
+            X_neg_load = to_idx(X_neg_load, self.ent_to_idx, self.rel_to_idx)
+            X_neg_load = tf.convert_to_tensor(X_neg_load)
+        
         # build tf graph for predictions
         tf.reset_default_graph()
         self.rnd = check_random_state(self.seed)
@@ -1377,7 +1394,7 @@ class EmbeddingModel(abc.ABC):
         # load the parameters
         self._load_model_from_trained_params()
         # build the eval graph
-        self._initialize_eval_graph()
+        self._initialize_eval_graph("test", X_neg_load)
 
         with tf.Session(config=self.tf_config) as sess:
             sess.run(tf.tables_initializer())
@@ -1399,7 +1416,7 @@ class EmbeddingModel(abc.ABC):
 
             return ranks
 
-    def predict(self, X, from_idx=False):
+    def predict(self, X, from_idx=False, X_neg_load=None):
         """
         Predict the scores of triples using a trained embedding model.
         The function returns raw scores generated by the model.
@@ -1433,6 +1450,10 @@ class EmbeddingModel(abc.ABC):
         if type(X) is not np.ndarray:
             X = np.array(X)
 
+        if X_neg_load is not None:
+            X_neg_load = to_idx(X_neg_load, self.ent_to_idx, self.rel_to_idx)
+            X_neg_load = tf.convert_to_tensor(X_neg_load)
+
         if not self.dealing_with_large_graphs:
             if not from_idx:
                 X = to_idx(X, ent_to_idx=self.ent_to_idx, rel_to_idx=self.rel_to_idx)
@@ -1456,7 +1477,7 @@ class EmbeddingModel(abc.ABC):
             tf.random.set_random_seed(self.seed)
             # load the parameters
             # build the eval graph
-            self._initialize_eval_graph()
+            self._initialize_eval_graph("test", X_neg_load)
 
             with tf.Session(config=self.tf_config) as sess:
                 sess.run(tf.tables_initializer())
